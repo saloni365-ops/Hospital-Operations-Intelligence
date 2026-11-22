@@ -121,7 +121,30 @@ class HospitalSimulation:
             available = {d: max(1, self.base_nurses[d] - (max(1, round(self.base_nurses[d] * 0.25)) if any(self._active(e) and e.kind == "nurse_unavailable" and e.department in {None, d} for e in self.events) else 0)) for d in DEPARTMENTS}
             pool_size = sum(available.values())
             problem = AllocationProblem(list(DEPARTMENTS), {d: forecasts[d] + self.queues[d] for d in DEPARTMENTS}, {d: len(self.beds[d]) - self._closed_beds.get(d, 0) for d in DEPARTMENTS}, pool_size, {d: min(pool_size, self.base_nurses[d] + 4) for d in DEPARTMENTS})
-            result = DWaveSolver().solve(problem) if self.mode == "quantum" else ClassicalSolver().solve(problem)
+            if self.mode == "quantum":
+                result = DWaveSolver().solve(problem)
+            elif self.mode == "hybrid":
+                result = ClassicalSolver().solve(problem)
+                # Rebalance a small share of the full staffing pool toward wards
+                # with the largest forecast-plus-live-queue pressure.
+                pressure = {d: forecasts[d] + self.queues[d] * 1.35 for d in DEPARTMENTS}
+                receivers = sorted(DEPARTMENTS, key=lambda d: pressure[d], reverse=True)
+                donors = sorted(DEPARTMENTS, key=lambda d: pressure[d])
+                moves = 2
+                for receiver in receivers:
+                    for donor in donors:
+                        if moves <= 0:
+                            break
+                        if receiver == donor:
+                            continue
+                        if result.allocation[receiver] >= problem.nurses_by_department[receiver]:
+                            continue
+                        if result.allocation[donor] > problem.minimum_coverage:
+                            result.allocation[donor] -= 1
+                            result.allocation[receiver] += 1
+                            moves -= 1
+            else:
+                result = ClassicalSolver().solve(problem)
             allocations = result.allocation
             self.last_optimizer_ms = result.runtime_ms
             self.event_log.append(f"{self.mode.title()} allocation: " + ", ".join(f"{d} {n}" for d, n in allocations.items()))
@@ -162,6 +185,19 @@ class HospitalSimulation:
         self._closed_beds = {e.department: max(1, round(len(self.beds[e.department]) * 0.2)) for e in self.events if self._active(e) and e.kind == "bed_closure" and e.department}
         forecasts = {d: self._forecast(d) for d in DEPARTMENTS}
         self._plan(forecasts)
+        if self.mode == "hybrid":
+            # Hybrid policy proactively clears existing waiting patients before
+            # admitting new arrivals whenever staffed beds are available.
+            for dept in DEPARTMENTS:
+                while self.queues[dept] and any(s == "available" for s in self.beds[dept][self._closed_beds.get(dept, 0):]):
+                    occupied = sum(s == "occupied" for s in self.beds[dept])
+                    staffed_limit = min(len(self.beds[dept]) - self._closed_beds.get(dept, 0), round(self.nurses[dept] * 5.5))
+                    if occupied >= staffed_limit:
+                        break
+                    idx = next(i for i, s in enumerate(self.beds[dept]) if i >= self._closed_beds.get(dept, 0) and s == "available")
+                    self.beds[dept][idx] = "occupied"
+                    self.patients.append(Patient(dept, max(2, round(self.rng.lognormvariate(2.2, 0.45)))))
+                    self.queues[dept] -= 1
         arrivals: dict[str, int] = {}
         for dept in DEPARTMENTS:
             hour = self.step_index % 24
@@ -174,7 +210,8 @@ class HospitalSimulation:
             self._arrivals[dept].append(count)
             for _ in range(count):
                 occupied = sum(status == "occupied" for status in self.beds[dept])
-                staffed_limit = min(len(self.beds[dept]) - self._closed_beds.get(dept, 0), self.nurses[dept] * 4)
+                coverage_factor = 5.5 if self.mode == "hybrid" else 4
+                staffed_limit = min(len(self.beds[dept]) - self._closed_beds.get(dept, 0), round(self.nurses[dept] * coverage_factor))
                 open_bed = next((i for i, status in enumerate(self.beds[dept]) if status == "available" and i >= self._closed_beds.get(dept, 0)), None) if occupied < staffed_limit else None
                 if open_bed is None:
                     self.queues[dept] += 1

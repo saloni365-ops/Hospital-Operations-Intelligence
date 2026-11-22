@@ -24,6 +24,11 @@ class StartRequest(BaseModel):
     horizon: int = Field(default=168, ge=1, le=720)
 
 
+class SettingsRequest(BaseModel):
+    seed: int | None = Field(default=None, ge=0)
+    horizon: int | None = Field(default=None, ge=1, le=720)
+
+
 class ModeRequest(BaseModel):
     mode: Literal["predictive", "quantum", "hybrid"]
 
@@ -46,6 +51,17 @@ def start(request: StartRequest) -> dict:
 @router.post("/simulation/pause")
 def pause() -> dict:
     simulation.running = False
+    return simulation.state()
+
+
+@router.post("/simulation/settings")
+def update_settings(request: SettingsRequest) -> dict:
+    if request.seed is not None:
+        simulation.seed = request.seed
+        simulation.rng.seed(request.seed)
+    if request.horizon is not None:
+        simulation.horizon = request.horizon
+        simulation.running = simulation.running and simulation.step_index < request.horizon
     return simulation.state()
 
 
@@ -131,17 +147,18 @@ async def websocket_state(websocket: WebSocket) -> None:
 
 
 @router.get("/failures")
-def failures(scenario: str = "admission_surge", seeds: str = "11,23,42") -> dict:
+def failures(scenario: str = "admission_surge", seeds: str = "11,23,42", horizon: int = 72) -> dict:
     failures: list[dict] = []
     run_ids: dict[str, str] = {}
+    horizon = max(1, min(horizon, 720))
     for seed_text in seeds.split(","):
         seed = int(seed_text.strip())
         for mode in ("hybrid", "quantum", "predictive"):
-            run = HospitalSimulation(seed=seed, horizon=72, mode=mode)
+            run = HospitalSimulation(seed=seed, horizon=horizon, mode=mode)
             kind = "surge" if scenario == "admission_surge" else "nurse_unavailable" if scenario == "nurse_shortage" else "bed_closure" if scenario == "bed_closure" else "ed_overload"
             department = "General Medicine" if scenario == "nurse_shortage" else "Cardiology" if scenario == "bed_closure" else None
             run.events.append(__import__("backend.simulation.engine", fromlist=["Disruption"]).Disruption(kind, department, 24, 12, 0.3 if kind != "ed_overload" else 0.5))
-            for _ in range(72):
+            for _ in range(horizon):
                 run.step()
             run_id = trace_store.record_run(mode, seed, scenario, run.history, [asdict(event) for event in run.events])
             run_ids[f"{mode}:{seed}"] = run_id
@@ -165,7 +182,10 @@ def start_comparison(seed: int = 42, horizon: int = Query(default=48, ge=1, le=1
         modes = ("hybrid", "quantum", "predictive")
         for index, mode in enumerate(modes, start=1):
             run = HospitalSimulation(seed=seed, horizon=horizon, mode=mode)
-            run.events.append(__import__("backend.simulation.engine", fromlist=["Disruption"]).Disruption("surge", None, 24 if horizon > 24 else 1, 12, 0.3))
+            kind = "surge" if scenario == "admission_surge" else "nurse_unavailable" if scenario == "nurse_shortage" else "bed_closure" if scenario == "bed_closure" else "ed_overload"
+            department = "General Medicine" if scenario == "nurse_shortage" else "Cardiology" if scenario == "bed_closure" else None
+            magnitude = 0.5 if kind == "ed_overload" else 0.3
+            run.events.append(__import__("backend.simulation.engine", fromlist=["Disruption"]).Disruption(kind, department, 24 if horizon > 24 else 1, 12, magnitude))
             for _ in range(horizon):
                 run.step()
             trace_store.record_run(mode, seed, scenario, run.history, [asdict(event) for event in run.events])

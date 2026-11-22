@@ -25,14 +25,14 @@ Copy-Item .env.example .env
 Run the API and frontend in separate terminals:
 
 ```powershell
-python -m uvicorn backend.app.main:app --reload --port 8000
+python -m uvicorn backend.app.main:app --reload --port 8001
 ```
 
 ```powershell
 npm --prefix frontend run dev
 ```
 
-The API docs are served at `http://127.0.0.1:8000/docs`; Vite serves the UI at `http://127.0.0.1:5173/control`.
+The API docs are served at `http://127.0.0.1:8001/docs`; Vite serves the UI at `http://127.0.0.1:5173/control`.
 
 ## Features
 
@@ -58,7 +58,7 @@ Run checks with `python -m pytest backend/tests -q`, `npm --prefix frontend test
 
 ## Docker
 
-Copy `.env.example` to `.env`, then run `docker compose up --build`. The frontend is exposed on port 5173 and the API on port 8000.
+Copy `.env.example` to `.env`, then run `docker compose up --build`. The frontend is exposed on port 5173 and the API on port 8001.
 
 ## Project Status
 
