@@ -1,0 +1,18 @@
+unmet_demand:
+  consecutive_hours: 3
+  minimum_patients: 3
+capacity:
+  occupancy_ratio: 0.95
+  consecutive_hours: 2
+staffing:
+  patients_per_nurse: 4.0
+  consecutive_hours: 2
+forecast:
+  mape_percent: 25.0
+  window_hours: 6
+stale_plan:
+  recompute_hours: 3
+solver:
+  baseline_penalty_percent: 20.0
+recovery:
+  recovery_hours: 12

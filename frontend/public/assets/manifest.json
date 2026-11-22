@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "provider": "procedural",
+  "overrides": {},
+  "notes": "Optional future CC0 packs may supply overrides keyed by texture name. Commercial game art must not be copied here."
+}
